@@ -1,0 +1,63 @@
+name: Tests & build Windows
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements-dev.txt
+      - run: pytest -q
+
+  build-windows:
+    needs: test
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Dépendances
+        run: pip install -r requirements.txt pyinstaller
+      - name: Test de l'interface
+        run: python -c "from miuo.gui import App; a=App('ci_config.json'); a.root.update(); a.root.destroy(); print('GUI OK')"
+      - name: Miuo.exe (application)
+        run: pyinstaller --noconfirm --onefile --windowed --name Miuo --icon assets/miuo.ico --add-data "assets;assets" --hidden-import MetaTrader5 miuo_app.py
+      - name: miuo-cli.exe (ligne de commande)
+        run: pyinstaller --noconfirm --onefile --console --name miuo-cli --icon assets/miuo.ico --add-data "assets;assets" --hidden-import MetaTrader5 miuo_app.py
+      - name: Test de l'exécutable (des données aléatoires doivent être REFUSÉES)
+        shell: pwsh
+        run: |
+          & .\dist\miuo-cli.exe --config ci.json validate --synthetic --bars 40000
+          if ($LASTEXITCODE -ne 2) { Write-Error "code inattendu $LASTEXITCODE"; exit 1 }
+          exit 0
+      - name: Paquet
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force Miuo | Out-Null
+          Copy-Item dist\Miuo.exe, dist\miuo-cli.exe, README.md, config.example.json Miuo\
+          Compress-Archive -Path Miuo\* -DestinationPath Miuo-windows.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Miuo-windows
+          path: Miuo-windows.zip
+      - name: Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            Miuo-windows.zip
+            dist/Miuo.exe
+            dist/miuo-cli.exe
