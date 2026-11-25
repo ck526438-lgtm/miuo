@@ -63,11 +63,13 @@ def data_fingerprint(df: pd.DataFrame) -> str:
 # --------------------------------------------------------------------------- synthétique
 def synthetic(n_bars: int = 60_000, freq: str = "5min", start_price: float = 2000.0,
               vol: float = 0.01, regime_drift: float = 0.0, regime_len: int = 300,
-              seed: int = 0, spread_points: int = 25) -> pd.DataFrame:
+              seed: int = 0, spread_points: int = 25,
+              drift_hours: tuple[int, int] | None = None) -> pd.DataFrame:
     """Série OHLC 24h/5j.
 
     regime_drift = 0  -> marche aléatoire pure : aucune stratégie ne doit y trouver d'avantage.
     regime_drift > 0  -> tendances persistantes plantées : une stratégie de cassure doit les capter.
+    drift_hours       -> la tendance n'existe qu'entre ces heures : seule une IA qui l'apprend en profite.
     """
     rng = np.random.default_rng(seed)
     idx = pd.date_range("2020-01-06", periods=int(n_bars * 1.5), freq=freq)
@@ -78,6 +80,8 @@ def synthetic(n_bars: int = 60_000, freq: str = "5min", start_price: float = 200
         n_reg = n_bars // regime_len + 1
         signs = rng.choice([-1.0, 1.0], size=n_reg)
         drift = np.repeat(signs, regime_len)[:n_bars] * regime_drift * sigma
+        if drift_hours:
+            drift = drift * ((idx.hour >= drift_hours[0]) & (idx.hour < drift_hours[1]))
     rets = drift + sigma * rng.standard_normal(n_bars)
     close = start_price * np.exp(np.cumsum(rets))
     open_ = np.concatenate([[start_price], close[:-1]])

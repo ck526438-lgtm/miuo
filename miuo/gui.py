@@ -22,17 +22,37 @@ def asset(name: str) -> Path:
     return base / "assets" / name
 
 
+def set_windows_startup(enabled: bool) -> None:
+    """Ajoute/retire Miuo du démarrage de Windows (exécutable uniquement)."""
+    if sys.platform != "win32" or not getattr(sys, "frozen", False):
+        return
+    import winreg
+    key = r"Software\Microsoft\Windows\CurrentVersion\Run"
+    with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key, 0, winreg.KEY_SET_VALUE) as k:
+        if enabled:
+            cfg_path = str(Path("config.json").resolve())
+            winreg.SetValueEx(k, "Miuo", 0, winreg.REG_SZ, f'"{sys.executable}" --config "{cfg_path}"')
+        else:
+            try:
+                winreg.DeleteValue(k, "Miuo")
+            except FileNotFoundError:
+                pass
+
+
 class App:
     def __init__(self, config_path: str = "config.json"):
         self.config_path = config_path
         self.cfg = MiuoConfig.load(config_path)
         self.q: queue.Queue = queue.Queue()
+        from .voice import Voice
+        self.voice = Voice(self.cfg.voice.enabled, self.cfg.voice.rate, self.cfg.voice.volume,
+                           log=lambda m: self.q.put(("log", m)))
         self.engine = None
         self.engine_thread = None
 
         self.root = tk.Tk()
         self.root.title(f"Miuo {__version__}")
-        self.root.geometry("1040x700")
+        self.root.geometry("1180x740")
         self.root.minsize(900, 600)
         self.root.configure(bg=BG)
         try:
@@ -54,6 +74,9 @@ class App:
         self._build_settings()
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
         self.root.after(150, self._pump)
+        if self.cfg.broker.auto_start:
+            self.root.after(1500, self.start_engine)
+            self.log("Démarrage automatique activé : connexion à MT5…", "info")
 
     # ------------------------------------------------------------------ style
     def _style(self):
@@ -114,10 +137,24 @@ class App:
         ttk.Button(top, text="▶ Démarrer", style="Accent.TButton", command=self.start_engine).pack(side="right", padx=4)
         self.allow_real = tk.BooleanVar(value=False)
         ttk.Checkbutton(top, text="Autoriser un compte RÉEL", variable=self.allow_real).pack(side="right", padx=12)
-        ttk.Label(f, text="Journal", style="Title.TLabel").pack(anchor="w", padx=12)
-        self.log_box = self._logbox(f)
-        self.log_box.pack(fill="both", expand=True, padx=12, pady=(4, 12))
-        self.log("Bienvenue. 1) Renseigne MT5 dans Paramètres  2) Valide l'avantage  3) Démarre sur DÉMO.", "info")
+        body = ttk.Frame(f, style="Panel.TFrame")
+        body.pack(fill="both", expand=True, padx=12, pady=(0, 12))
+        left = ttk.Frame(body, style="Panel.TFrame")
+        left.pack(side="left", fill="both", expand=True)
+        ttk.Label(left, text="Journal", style="Title.TLabel").pack(anchor="w")
+        self.log_box = self._logbox(left)
+        self.log_box.pack(fill="both", expand=True, pady=(4, 0))
+        right = ttk.Frame(body, style="Panel.TFrame")
+        right.pack(side="left", fill="y", padx=(10, 0))
+        ttk.Label(right, text="Analyse du marché", style="Title.TLabel").pack(anchor="w")
+        self.ana_box = tk.Text(right, bg="#070a14", fg=TEXT, relief="flat", font=("Consolas", 10),
+                               width=46, height=14, padx=10, pady=8, wrap="word")
+        self.ana_box.pack(fill="both", expand=True, pady=(4, 8))
+        self.ana_box.insert("end", "L'analyse s'affiche ici dès que Miuo est connecté.")
+        ttk.Button(right, text="🔊 Lire l'analyse", command=self.speak_analysis).pack(fill="x", pady=2)
+        ttk.Button(right, text="🔈 Tester la voix", command=self.test_voice).pack(fill="x", pady=2)
+        self.log("Bienvenue. Ouvre MetaTrader 5 (connecté à ton compte) : Miuo s'y connecte tout seul.", "info")
+        self.log("1) Valide l'avantage  2) Démarre sur un compte DÉMO.", "info")
 
     def log(self, msg: str, tag: str | None = None):
         if tag is None:
@@ -143,7 +180,8 @@ class App:
                 from .execution import MT5Broker
                 from .live import LiveEngine
                 self.engine = LiveEngine(self.cfg, MT5Broker(self.cfg, log=self._qlog), log=self._qlog,
-                                         allow_real=self.allow_real.get())
+                                         allow_real=self.allow_real.get(), voice=self.voice,
+                                         on_analysis=lambda t: self.q.put(("analysis", t)))
                 if self.engine.prepare():
                     a = self.engine.broker.account()
                     self.q.put(("acct", f"Compte {'DÉMO' if a['is_demo'] else 'RÉEL'} {a['login']} · "
@@ -156,6 +194,19 @@ class App:
 
         self.engine_thread = threading.Thread(target=worker, daemon=True)
         self.engine_thread.start()
+
+    def speak_analysis(self):
+        if self.engine and self.engine.view is not None:
+            self.engine.speak_analysis()
+        else:
+            self.log("Pas encore d'analyse : démarre Miuo pour qu'il lise le marché.", "info")
+
+    def test_voice(self):
+        self._save_settings(silent=True)
+        self.voice.enabled = True
+        self.voice.say("Bonjour, je suis Miuo. Achat sur l'or à 2650,40, 0,10 lot. Stop à 2646,90, "
+                       "objectif à 2657,40. Tendance haussière en H4 et H1, volatilité normale.")
+        self.voice.enabled = self.cfg.voice.enabled
 
     def stop_engine(self):
         if self.engine:
@@ -271,6 +322,11 @@ class App:
             for r, (label, obj, attr, kind) in enumerate(rows):
                 ttk.Label(lf, text=label).grid(row=r, column=0, sticky="w", pady=4)
                 val = getattr(obj, attr)
+                if kind == "bool":
+                    var = tk.BooleanVar(value=bool(val))
+                    ttk.Checkbutton(lf, variable=var).grid(row=r, column=1, sticky="w", padx=(8, 0), pady=4)
+                    self.vars[f"{title}.{attr}"] = (obj, attr, var)
+                    continue
                 var = tk.StringVar(value=str(val))
                 if kind == "tf":
                     w = ttk.Combobox(lf, textvariable=var, values=list(TIMEFRAME_MINUTES), width=20, state="readonly")
@@ -285,7 +341,10 @@ class App:
             ("Identifiant", c.broker, "login", "int"), ("Mot de passe", c.broker, "password", "secret"),
             ("Serveur", c.broker, "server", "str"), ("Chemin terminal64.exe", c.broker, "terminal_path", "str"),
             ("Numéro magique", c.broker, "magic", "int"), ("Symbole", c.market, "symbol", "str"),
-            ("Unité de temps", c.market, "timeframe", "tf")])
+            ("Unité de temps", c.market, "timeframe", "tf"),
+            ("Connexion automatique", c.broker, "auto_connect", "bool"),
+            ("Trader dès l'ouverture", c.broker, "auto_start", "bool"),
+            ("Lancer avec Windows", c.broker, "start_with_windows", "bool")])
         section("Risque", 1, [
             ("Risque par trade (0.005 = 0,5 %)", c.risk, "risk_per_trade", "float"),
             ("Perte max / jour", c.risk, "max_daily_loss", "float"),
@@ -294,14 +353,23 @@ class App:
             ("Pertes consécutives avant pause", c.risk, "max_consecutive_losses", "int"),
             ("Spread max (points)", c.risk, "max_spread_points", "int"),
             ("Commission / lot", c.market, "commission_per_lot", "float")])
-        section("Alertes Telegram", 2, [
-            ("Token du bot", c.notify, "telegram_token", "secret"),
-            ("Chat ID", c.notify, "telegram_chat_id", "str")])
+        section("IA, voix & alertes", 2, [
+            ("Filtre IA", c.ai, "enabled", "bool"),
+            ("Espérance min. IA (R)", c.ai, "min_edge_r", "float"),
+            ("Voix off", c.voice, "enabled", "bool"),
+            ("Lire l'analyse avec les trades", c.voice, "announce_analysis", "bool"),
+            ("Point vocal toutes les (min, 0 = non)", c.voice, "brief_every_minutes", "int"),
+            ("Vitesse de la voix (-10 à 10)", c.voice, "rate", "int"),
+            ("Token Telegram", c.notify, "telegram_token", "secret"),
+            ("Chat ID Telegram", c.notify, "telegram_chat_id", "str")])
         ttk.Button(f, text="Enregistrer", style="Accent.TButton", command=self._save_settings).pack(anchor="e", padx=18, pady=(0, 14))
 
     def _save_settings(self, silent: bool = False):
         for obj, attr, var in self.vars.values():
             cur = getattr(obj, attr)
+            if isinstance(var, tk.BooleanVar):
+                setattr(obj, attr, bool(var.get()))
+                continue
             raw = var.get().strip()
             try:
                 val = type(cur)(float(raw)) if isinstance(cur, int) and not isinstance(cur, bool) else \
@@ -313,6 +381,8 @@ class App:
             setattr(obj, attr, val)
         self.cfg.strategy.name = self.strat_var.get()
         self.cfg.save(self.config_path)
+        self.voice.enabled, self.voice.rate = self.cfg.voice.enabled, self.cfg.voice.rate
+        set_windows_startup(self.cfg.broker.start_with_windows)
         if not silent:
             self.log("Paramètres enregistrés.", "info")
 
@@ -330,6 +400,9 @@ class App:
                     self.val_box.insert("end", "\n" + payload.summary() + "\n", "ok" if payload.passed else "bad")
                     self.val_box.see("end")
                     self._draw_curve(payload.oos_equity_r)
+                elif kind == "analysis":
+                    self.ana_box.delete("1.0", "end")
+                    self.ana_box.insert("end", payload)
                 elif kind == "acct":
                     self.acct_lbl.configure(text=payload)
                 elif kind == "status":

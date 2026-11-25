@@ -34,14 +34,23 @@ jobs:
       - name: Test de l'interface
         run: python -c "from miuo.gui import App; a=App('ci_config.json'); a.root.update(); a.root.destroy(); print('GUI OK')"
       - name: Miuo.exe (application)
-        run: pyinstaller --noconfirm --onefile --windowed --name Miuo --icon assets/miuo.ico --add-data "assets;assets" --hidden-import MetaTrader5 miuo_app.py
+        run: pyinstaller --noconfirm --onefile --windowed --name Miuo --icon assets/miuo.ico --add-data "assets;assets" --hidden-import MetaTrader5 --collect-submodules sklearn.ensemble._hist_gradient_boosting miuo_app.py
       - name: miuo-cli.exe (ligne de commande)
-        run: pyinstaller --noconfirm --onefile --console --name miuo-cli --icon assets/miuo.ico --add-data "assets;assets" --hidden-import MetaTrader5 miuo_app.py
+        run: pyinstaller --noconfirm --onefile --console --name miuo-cli --icon assets/miuo.ico --add-data "assets;assets" --hidden-import MetaTrader5 --collect-submodules sklearn.ensemble._hist_gradient_boosting miuo_app.py
       - name: Test de l'exécutable (des données aléatoires doivent être REFUSÉES)
         shell: pwsh
         run: |
-          & .\dist\miuo-cli.exe --config ci.json validate --synthetic --bars 40000
+          & .\dist\miuo-cli.exe --config ci.json validate --synthetic --bars 120000
           if ($LASTEXITCODE -ne 2) { Write-Error "code inattendu $LASTEXITCODE"; exit 1 }
+          exit 0
+      - name: Test de la voix off (synthèse dans un fichier .wav)
+        shell: pwsh
+        run: |
+          & .\dist\miuo-cli.exe voice --wav voix.wav --text "Achat sur l'or à 2650,40, stop à 2646,90. Tendance haussière, volatilité élevée."
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          $size = (Get-Item voix.wav).Length
+          Write-Output "voix.wav : $size octets"
+          if ($size -lt 20000) { exit 1 }
           exit 0
       - name: Paquet
         shell: pwsh

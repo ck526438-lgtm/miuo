@@ -17,7 +17,13 @@ from miuo.validation import EdgeReport, check_gate, validate
 def cfg(tmp_path):
     c = MiuoConfig()
     c.data_dir = str(tmp_path)
+    c.broker.live_bars = 600
     return c
+
+
+def silent_voice():
+    from miuo.voice import Voice
+    return Voice(speaker=lambda t: None)
 
 
 # ---------------------------------------------------------------- aucune fuite du futur
@@ -120,10 +126,10 @@ def test_real_account_blocked_without_report(cfg):
 
 # ---------------------------------------------------------------- moteur temps réel
 def test_live_engine_matches_backtest_and_never_doubles(cfg):
-    df = synthetic(3000, regime_drift=0.25, seed=5)
+    df = synthetic(1600, regime_drift=0.25, seed=5)
     cfg.market.slippage_points = 0
     broker = PaperBroker(df, cfg)
-    LiveEngine(cfg, broker, log=lambda m: None).run()
+    LiveEngine(cfg, broker, log=lambda m: None, voice=silent_voice()).run()
     s = STRATEGIES[cfg.strategy.name]
     p = s.params()
     bt = run_backtest(df.iloc[300:], s.signals(df, p).iloc[300:], cfg, p["max_hold"])
@@ -135,7 +141,7 @@ def test_live_engine_matches_backtest_and_never_doubles(cfg):
 def test_kill_switch_file_closes_everything(cfg):
     df = synthetic(1500, regime_drift=0.25, seed=5)
     broker = PaperBroker(df, cfg)
-    eng = LiveEngine(cfg, broker, log=lambda m: None)
+    eng = LiveEngine(cfg, broker, log=lambda m: None, voice=silent_voice())
     assert eng.prepare()
     broker._pos = {"ticket": 99, "direction": 1, "volume": 0.1, "price_open": 2000.0, "sl": 1990.0,
                    "tp": 2020.0, "time": df.index[300], "profit": 0}

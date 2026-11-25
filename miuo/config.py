@@ -63,7 +63,26 @@ class BrokerConfig:
     terminal_path: str = ""
     magic: int = 52643801
     deviation_points: int = 20
-    poll_seconds: float = 1.0
+    poll_seconds: float = 0.25          # vérification 4 fois par seconde
+    live_bars: int = 3000               # historique chargé à chaque bougie (indicateurs H1/H4 stables)
+    auto_connect: bool = True           # se connecte seul au terminal MT5 déjà ouvert
+    auto_start: bool = False            # démarre le trading dès l'ouverture de l'application
+    start_with_windows: bool = False
+
+
+@dataclass
+class AIConfig:
+    enabled: bool = True
+    min_edge_r: float = 0.05            # espérance minimale prévue par l'IA pour prendre un trade
+
+
+@dataclass
+class VoiceConfig:
+    enabled: bool = True
+    rate: int = 0                       # -10 (lent) à 10 (rapide)
+    volume: int = 100
+    announce_analysis: bool = True      # lit l'analyse de marché avec chaque trade
+    brief_every_minutes: int = 0        # point de marché vocal périodique (0 = désactivé)
 
 
 @dataclass
@@ -80,6 +99,8 @@ class MiuoConfig:
     gate: GateConfig = field(default_factory=GateConfig)
     broker: BrokerConfig = field(default_factory=BrokerConfig)
     notify: NotifyConfig = field(default_factory=NotifyConfig)
+    ai: AIConfig = field(default_factory=AIConfig)
+    voice: VoiceConfig = field(default_factory=VoiceConfig)
     data_dir: str = "miuo_data"
 
     @property
@@ -104,6 +125,8 @@ class MiuoConfig:
             gate=build(GateConfig, d.get("gate")),
             broker=build(BrokerConfig, d.get("broker")),
             notify=build(NotifyConfig, d.get("notify")),
+            ai=build(AIConfig, d.get("ai")),
+            voice=build(VoiceConfig, d.get("voice")),
             data_dir=d.get("data_dir", "miuo_data"),
         )
 

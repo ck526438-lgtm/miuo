@@ -2,7 +2,7 @@
 
 <h1 align="center">Miuo</h1>
 <p align="center"><b>Le bot de trading MT5 qui doit prouver son avantage avant de risquer ton argent.</b><br>
-Avantage statistique validé · gestion du risque stricte · exécution sans doublon ni position sans stop</p>
+Entièrement automatique · IA validée hors échantillon · voix off qui annonce et explique chaque trade</p>
 
 ---
 
@@ -18,6 +18,26 @@ démontré, sur des données qu'il n'a jamais vues, que sa stratégie gagne apr�
 | **Risque maîtrisé** | 0,5 % par trade, -3 %/jour → pause, -15 % depuis le pic → kill switch, pause après 4 pertes, filtre de spread, jamais de martingale. |
 | **Exécution sans erreur** | Stop et objectif posés côté serveur dans l'ordre, revérification anti-doublon avant chaque envoi, normalisation lots/prix, reprises sur erreurs transitoires, réconciliation au redémarrage. |
 | **Backtest honnête** | Entrée à la bougie suivante, spread réel, slippage, commission, stop prioritaire si stop et objectif tombent dans la même bougie, gaps. |
+
+## Automatique, rapide, et il te parle
+
+- **Connexion automatique à MT5** : ouvre MetaTrader 5 connecté à ton compte, Miuo le trouve tout seul
+  (même sans identifiants dans les paramètres). Si la connexion tombe, il se reconnecte seul (2 s, 4 s, 8 s… jusqu'à 60 s).
+- **Démarrage automatique** : « Trader dès l'ouverture » + « Lancer avec Windows » → le PC démarre, Miuo trade.
+- **Rapide** : vérification 4 fois par seconde ; ~25 ms entre la clôture d'une bougie et l'envoi de l'ordre.
+- **IA (Python, gradient boosting)** : pour chaque signal, elle estime la probabilité de gain selon la tendance H4/H1/M5,
+  la volatilité, le momentum, les niveaux de la veille et l'heure. Le trade n'est pris que si l'espérance prévue
+  dépasse +0,05 R. L'IA est entraînée sur le passé et jugée sur le futur pendant la validation :
+  **si elle n'améliore pas les résultats hors échantillon, Miuo la désactive automatiquement.**
+- **Voix off française** : à chaque trade, Miuo annonce par exemple :
+  > « Achat sur l'or à 2650,40, 0,12 lot. Stop à 2646,90, objectif à 2657,40, rapport gain sur risque de 2 pour 1.
+  > Raison : cassure à la hausse du range asiatique, au-dessus de la moyenne 200. Tendance haussière en H4 et en H1,
+  > volatilité normale, RSI à 61, en session de Londres. Confiance de l'IA : 58 pour cent, espérance prévue 0,74 R. »
+
+  Il annonce aussi les clôtures (gain/perte), les coupures de connexion et les arrêts. Bouton « Lire l'analyse »
+  et point de marché vocal périodique en option. Pour une voix française, installe-la dans
+  *Paramètres Windows → Heure et langue → Voix* (sinon la voix Windows par défaut est utilisée).
+- **Analyse du marché en direct** : tendance H4/H1/M5, biais, volatilité, RSI, plus haut/bas de la veille et du jour, session.
 
 > ⚠️ Aucun logiciel ne garantit des gains. Miuo te dit honnêtement **si** une stratégie a un avantage
 > sur tes données — et la plupart du temps, la bonne réponse est « non ». Commence toujours en démo.
@@ -74,6 +94,7 @@ python -m miuo validate --synthetic              # démonstration : doit être R
 python -m miuo live                              # trading (démo)
 python -m miuo live --allow-real                 # trading réel (rapport validé exigé)
 python -m miuo paper --csv xauusd_m5.csv         # rejoue un CSV avec le moteur temps réel
+python -m miuo voice                             # teste la voix off
 ```
 
 Alertes Telegram : renseigne `telegram_token` et `telegram_chat_id` dans les paramètres.
@@ -90,7 +111,10 @@ miuo/
 ├── backtest.py     moteur de backtest pessimiste
 ├── stats.py        métriques, bootstrap, Monte Carlo
 ├── validation.py   walk-forward, holdout, rapport, verrou du compte réel
-├── execution.py    MT5Broker (réel) et PaperBroker (simulation)
+├── ai.py           IA : variables de marché + filtre gradient boosting
+├── analysis.py     analyse de marché et textes de la voix off
+├── voice.py        synthèse vocale Windows (SAPI), file d'attente non bloquante
+├── execution.py    MT5Broker (réel, auto-connexion) et PaperBroker (simulation)
 ├── live.py         moteur temps réel
 ├── notify.py       Telegram
 └── gui.py          application de bureau

@@ -58,6 +58,9 @@ class EdgeReport:
     created_at: str = ""
     valid_until: str = ""
     oos_equity_r: list = field(default_factory=list)
+    ai_enabled: bool = False
+    ai_model_file: str = ""
+    ai_comparison: dict = field(default_factory=dict)
 
     def save(self, path: str | Path) -> None:
         Path(path).write_text(json.dumps(asdict(self), indent=2, ensure_ascii=False, default=float),
@@ -76,6 +79,11 @@ class EdgeReport:
         for c in self.checks:
             lines.append(f"  {'✔' if c['passed'] else '✘'} {c['name']:<38} {c['value']:>10.4f}   ({c['threshold']})")
         lines.append("")
+        if self.ai_comparison.get("avec_ia"):
+            a, b = self.ai_comparison["avec_ia"], self.ai_comparison["sans_ia"]
+            lines.append(f"IA : {'ACTIVÉE' if self.ai_enabled else 'désactivée'} — hors échantillon "
+                         f"{a['expectancy_r']:+.3f} R/trade avec IA ({a['trades']} trades) contre "
+                         f"{b['expectancy_r']:+.3f} R sans ({b['trades']} trades)")
         lines.append(f"Tentative n°{self.attempts} sur ce marché → alpha ajusté {self.alpha_adjusted:.4f}")
         if self.passed:
             lines.append(f"Valide jusqu'au {self.valid_until[:10]}.")
@@ -124,31 +132,80 @@ def validate(df: pd.DataFrame, cfg: MiuoConfig, ledger: Path | None = None, reco
         scores = [_score(bt(k, a, b).r) for k in range(len(grid))]
         return int(np.argmax(scores))
 
-    oos_r, oos_pnl, folds = [], [], []
+    use_ai_cfg = cfg.ai.enabled
+    mf = None
+    if use_ai_cfg:
+        from .ai import AIFilter, market_features
+        mf = market_features(df)
+
+    def ai_run(k: int, a_train: int, a: int, b: int):
+        """Entraîne l'IA sur [0, a_train) puis rejoue [a, b) avec les signaux filtrés."""
+        ai = AIFilter(cfg.ai.min_edge_r)
+        train = bt(k, 0, a_train)
+        if not ai.fit(df.index, mf, sigs[k], train.trades):
+            return None, ai
+        fs = ai.apply(sigs[k], mf)
+        return run_backtest(df.iloc[a:b], fs.iloc[a:b], cfg, max_hold=int(grid[k].get("max_hold", 48))), ai
+
+    base_r, base_pnl, ai_r, ai_pnl, folds = [], [], [], [], []
+    ai_complete = use_ai_cfg
     for f in range(1, g.n_folds + 1):
         a_test, b_test = bounds[f], bounds[f + 1]
         k = best_on(0, a_test)
         res = bt(k, a_test, b_test)
         st = summarize(res.r)
-        folds.append({"fold": f, "test_start": str(df.index[a_test]), "test_end": str(df.index[b_test - 1]),
-                      "params": {key: grid[k][key] for key in strat.param_grid}, **st})
-        oos_r.append(res.r)
-        oos_pnl.append(res.trades["pnl"].to_numpy())
-        log(f"Pli {f}/{g.n_folds} : {st['trades']} trades, espérance {st['expectancy_r']:+.3f} R")
+        fold = {"fold": f, "test_start": str(df.index[a_test]), "test_end": str(df.index[b_test - 1]),
+                "params": {key: grid[k][key] for key in strat.param_grid}, **st}
+        base_r.append(res.r)
+        base_pnl.append(res.trades["pnl"].to_numpy())
+        msg = f"Pli {f}/{g.n_folds} : {st['trades']} trades, espérance {st['expectancy_r']:+.3f} R"
+        if use_ai_cfg:
+            res_ai, _ = ai_run(k, a_test, a_test, b_test)
+            if res_ai is None:  # pas assez d'historique pour apprendre : l'IA laisse tout passer
+                res_ai = res
+            sa = summarize(res_ai.r)
+            fold["ai"] = sa
+            ai_r.append(res_ai.r)
+            ai_pnl.append(res_ai.trades["pnl"].to_numpy())
+            msg += f" | avec IA : {sa['trades']} trades, {sa['expectancy_r']:+.3f} R"
+        folds.append(fold)
+        log(msg)
 
-    oos = np.concatenate(oos_r) if oos_r else np.array([])
-    oos_stats = summarize(oos, np.concatenate(oos_pnl) if oos_pnl else None)
+    cat = lambda xs: np.concatenate(xs) if xs else np.array([])  # noqa: E731
+    base_stats = summarize(cat(base_r), cat(base_pnl))
+    ai_stats = summarize(cat(ai_r), cat(ai_pnl)) if ai_complete else None
+    use_ai = bool(ai_stats and ai_stats["trades"] >= g.min_trades
+                  and ai_stats["expectancy_r"] > base_stats["expectancy_r"])
+    if use_ai_cfg:
+        log(f"IA {'ACTIVÉE' if use_ai else 'désactivée'} : espérance hors échantillon "
+            f"{ai_stats['expectancy_r']:+.3f} R avec IA contre {base_stats['expectancy_r']:+.3f} R sans.")
+    oos = cat(ai_r) if use_ai else cat(base_r)
+    oos_stats = ai_stats if use_ai else base_stats
+    for fo in folds:  # les plis gagnants se comptent sur le mode retenu
+        fo["chosen_expectancy_r"] = fo["ai"]["expectancy_r"] if use_ai else fo["expectancy_r"]
 
     k_final = best_on(0, hold_start)
-    hold = bt(k_final, hold_start, n)
+    hold = None
+    if use_ai:
+        hold, _ = ai_run(k_final, hold_start, hold_start, n)
+    if hold is None:
+        hold = bt(k_final, hold_start, n)
     hold_stats = summarize(hold.r)
     log(f"Holdout : {hold_stats['trades']} trades, espérance {hold_stats['expectancy_r']:+.3f} R")
+
+    ai_model_file = ""
+    if use_ai:  # modèle de production : appris sur tout l'historique
+        final_ai = AIFilter(cfg.ai.min_edge_r)
+        if final_ai.fit(df.index, mf, sigs[k_final], bt(k_final, 0, n).trades):
+            path = cfg.data_path / f"miuo_ai_{cfg.market.symbol}_{cfg.market.timeframe}.pkl"
+            final_ai.save(path)
+            ai_model_file = path.name
 
     attempts = _ledger_attempts(cfg, ledger, record_attempt)
     alpha_adj = g.alpha / attempts
     p = bootstrap_pvalue(oos, g.bootstrap_iter)
     mc_dd = monte_carlo_drawdown(oos, cfg.risk.risk_per_trade, percentile=g.mc_dd_percentile)
-    pos_folds = float(np.mean([fo["expectancy_r"] > 0 for fo in folds])) if folds else 0.0
+    pos_folds = float(np.mean([fo["chosen_expectancy_r"] > 0 for fo in folds])) if folds else 0.0
 
     checks = [
         Check("Trades hors échantillon", oos_stats["trades"], f">= {g.min_trades}", oos_stats["trades"] >= g.min_trades),
@@ -171,6 +228,8 @@ def validate(df: pd.DataFrame, cfg: MiuoConfig, ledger: Path | None = None, reco
         data_bars=n, data_hash=data_fingerprint(df), created_at=now.isoformat(),
         valid_until=(now + timedelta(days=g.validity_days)).isoformat(),
         oos_equity_r=np.cumsum(oos).round(4).tolist(),
+        ai_enabled=bool(ai_model_file), ai_model_file=ai_model_file,
+        ai_comparison={"sans_ia": base_stats, "avec_ia": ai_stats},
     )
     return report
 

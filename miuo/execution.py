@@ -34,6 +34,18 @@ class OrderResult:
     message: str = ""
 
 
+def find_terminal() -> str | None:
+    """Cherche terminal64.exe dans les emplacements d'installation habituels de MT5."""
+    import glob
+    import os
+    roots = [os.environ.get("ProgramFiles", r"C:\Program Files"), os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)"),
+             os.path.join(os.environ.get("APPDATA", ""), "MetaQuotes")]
+    for root in roots:
+        for path in glob.glob(os.path.join(root, "*", "terminal64.exe")):
+            return path
+    return None
+
+
 def _round_step(x: float, step: float) -> float:
     return round(np.floor(x / step + 1e-9) * step, 8)
 
@@ -67,7 +79,11 @@ class MT5Broker:
         if b.login:
             kwargs.update(login=int(b.login), password=b.password, server=b.server)
         if not mt5.initialize(**kwargs):
-            raise BrokerError(f"Connexion MT5 impossible : {mt5.last_error()}")
+            err = mt5.last_error()
+            found = None if b.terminal_path else find_terminal()
+            if not found or not mt5.initialize(path=found, **{k: v for k, v in kwargs.items() if k != "path"}):
+                raise BrokerError(f"Connexion MT5 impossible : {err}. Ouvre MetaTrader 5 et connecte-toi à ton compte.")
+            b.terminal_path = found
         ti = mt5.terminal_info()
         if ti is None or not ti.connected:
             raise BrokerError("Le terminal MT5 n'est pas connecté au serveur du broker.")
@@ -85,6 +101,17 @@ class MT5Broker:
 
     def disconnect(self) -> None:
         self.mt5.shutdown()
+
+    def is_connected(self) -> bool:
+        ti = self.mt5.terminal_info()
+        return bool(ti and ti.connected and self.mt5.account_info() is not None)
+
+    def reconnect(self) -> None:
+        try:
+            self.mt5.shutdown()
+        except Exception:
+            pass
+        self.connect()
 
     # ------------------------------------------------------------------ lecture
     def account(self) -> dict:
@@ -218,6 +245,8 @@ class PaperBroker:
 
     def connect(self): pass
     def disconnect(self): pass
+    def is_connected(self): return True
+    def reconnect(self): pass
 
     def _spread(self) -> float:
         row = self.df.iloc[self.i]

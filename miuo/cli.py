@@ -24,6 +24,10 @@ def _data(args, cfg):
 
 
 def main(argv=None) -> int:
+    if getattr(sys, "frozen", False):  # exe lancé au démarrage de Windows : travailler à côté de l'exe
+        import os
+        from pathlib import Path
+        os.chdir(Path(sys.executable).parent)
     for stream in (sys.stdout, sys.stderr):  # console Windows : éviter les erreurs d'encodage
         if stream is not None and hasattr(stream, "reconfigure"):
             stream.reconfigure(encoding="utf-8", errors="replace")
@@ -44,6 +48,10 @@ def main(argv=None) -> int:
 
     lv = sub.add_parser("live", help="trading en temps réel sur MT5")
     lv.add_argument("--allow-real", action="store_true", help="autorise un compte RÉEL (rapport validé exigé)")
+
+    vo = sub.add_parser("voice", help="teste la voix off")
+    vo.add_argument("--text", default="Bonjour, je suis Miuo. Achat sur l'or à 2650,40, stop à 2646,90.")
+    vo.add_argument("--wav", help="écrit le son dans un fichier .wav au lieu de le jouer")
 
     pp = sub.add_parser("paper", help="rejoue un CSV avec le moteur temps réel")
     pp.add_argument("--csv", required=True)
@@ -84,6 +92,12 @@ def main(argv=None) -> int:
         except KeyboardInterrupt:
             eng.stop()
         return 0
+
+    if args.cmd == "voice":
+        from .voice import speak_blocking
+        ok = speak_blocking(args.text, cfg.voice.rate, cfg.voice.volume, wav_path=args.wav)
+        print("Voix OK" if ok else "Synthèse vocale indisponible")
+        return 0 if ok else 3
 
     if args.cmd == "paper":
         from .data import load_csv

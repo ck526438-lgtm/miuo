@@ -21,6 +21,7 @@ class Strategy:
     description = ""
     default_params: dict = {}
     param_grid: dict = {}
+    reason: dict = {1: "signal d'achat", -1: "signal de vente"}
 
     def params(self, overrides: dict | None = None) -> dict:
         p = dict(self.default_params)
@@ -52,6 +53,8 @@ class SessionBreakout(Strategy):
     """
     name = "session_breakout"
     description = "Cassure du range de session (Asie -> Londres) filtrée par la tendance"
+    reason = {1: "cassure à la hausse du range asiatique, au-dessus de la moyenne 200",
+              -1: "cassure à la baisse du range asiatique, sous la moyenne 200"}
     default_params = {"range_start": 0, "range_end": 7, "trade_end": 12, "atr_n": 14,
                       "sl_atr": 1.5, "tp_r": 2.0, "ema_trend": 200, "max_hold": 48}
     param_grid = {"sl_atr": [1.0, 1.5, 2.0], "tp_r": [1.5, 2.0, 3.0], "trade_end": [11, 14]}
@@ -79,6 +82,8 @@ class TrendPullback(Strategy):
     """Achat des replis sur la moyenne rapide dans une tendance établie (et inversement)."""
     name = "trend_pullback"
     description = "Repli sur EMA rapide dans la tendance EMA lente"
+    reason = {1: "repli acheteur sur la moyenne rapide dans une tendance haussière",
+              -1: "rebond vendeur sur la moyenne rapide dans une tendance baissière"}
     default_params = {"ema_fast": 20, "ema_slow": 100, "atr_n": 14, "rsi_n": 14,
                       "sl_atr": 1.5, "tp_r": 2.0, "max_hold": 48}
     param_grid = {"sl_atr": [1.0, 1.5, 2.0], "tp_r": [1.5, 2.0, 3.0], "ema_fast": [20, 50]}

@@ -44,11 +44,26 @@
     "terminal_path": "",
     "magic": 52643801,
     "deviation_points": 20,
-    "poll_seconds": 1.0
+    "poll_seconds": 0.25,
+    "live_bars": 3000,
+    "auto_connect": true,
+    "auto_start": false,
+    "start_with_windows": false
   },
   "notify": {
     "telegram_token": "",
     "telegram_chat_id": ""
+  },
+  "ai": {
+    "enabled": true,
+    "min_edge_r": 0.05
+  },
+  "voice": {
+    "enabled": true,
+    "rate": 0,
+    "volume": 100,
+    "announce_analysis": true,
+    "brief_every_minutes": 0
   },
   "data_dir": "miuo_data"
 }
