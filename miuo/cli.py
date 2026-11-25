@@ -24,10 +24,12 @@ def _data(args, cfg):
 
 
 def main(argv=None) -> int:
-    if getattr(sys, "frozen", False):  # exe lancé au démarrage de Windows : travailler à côté de l'exe
+    if getattr(sys, "frozen", False):
         import os
         from pathlib import Path
-        os.chdir(Path(sys.executable).parent)
+        # lancé par le démarrage de Windows, le dossier courant est System32 : travailler à côté de l'exe
+        if "system32" in str(Path.cwd()).lower():
+            os.chdir(Path(sys.executable).parent)
     for stream in (sys.stdout, sys.stderr):  # console Windows : éviter les erreurs d'encodage
         if stream is not None and hasattr(stream, "reconfigure"):
             stream.reconfigure(encoding="utf-8", errors="replace")
